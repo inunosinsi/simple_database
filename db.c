@@ -1,8 +1,11 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 
 typedef struct {
 	char* buffer;
@@ -56,8 +59,14 @@ const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
 const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 
 typedef struct {
-	uint32_t num_rows;
+	int file_descriptor;
+	uint32_t file_length;
 	void* pages[TABLE_MAX_PAGES];
+} Pager;
+
+typedef struct {
+	Pager* pager;
+	uint32_t num_rows;
 } Table;
 
 void print_row(Row* row) {
@@ -76,24 +85,52 @@ void deserialize_row(void *source, Row* destination) {
 	memcpy(&(destination->email), source + EMAIL_OFFSET, EMAIL_SIZE);
 }
 
+void* get_page(Pager* pager, uint32_t page_num) {
+	
+}
+
 void* row_slot(Table* table, uint32_t row_num) {
 	uint32_t page_num = row_num / ROWS_PER_PAGE;
-	void *page = table->pages[page_num];
-	if (page == NULL) {
-		// Allocate memory only when we try to access page
-		page = table->pages[page_num] = malloc(PAGE_SIZE);
-	}
+	void* page = get_page(table->pager, page_num);
 	uint32_t row_offset = row_num % ROWS_PER_PAGE;
 	uint32_t byte_offset = row_offset * ROW_SIZE;
 	return page + byte_offset;
 }
 
-Table* new_table() {
-	Table* table = (Table*)malloc(sizeof(Table));
-	table->num_rows = 0;
-	for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
-		table->pages[i] = NULL;
+Pager* pager_open(const char* filename) {
+	int fd = open(filename,
+				O_RDWR |		//Read/Write mode
+					O_CREAT ,	// Create file if it does not exist
+				S_IWUSR |		// User write permission
+					S_IRUSR		// User read permission
+				);
+
+	if (fd == -1) {
+		printf("Unable to open file\n");
+		exit(EXIT_FAILURE);
 	}
+
+	off_t file_length = lseek(fd, 0, SEEK_END);
+
+	Pager* pager = malloc(sizeof(Pager));
+	pager->file_descriptor = fd;
+	pager->file_length = file_length;
+
+	for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++) {
+		pager->pages[i] = NULL;
+	}
+
+	return pager;
+}
+
+Table* do_open(const char* filename) {
+	Pager* pager = pager_open(filename);
+	uint32_t num_rows = pager->file_length / ROW_SIZE;
+
+	Table* table = (Table*)malloc(sizeof(Table));
+	table->pager = pager;
+	table->num_rows = num_rows;
+	
 	return table;
 }
 
